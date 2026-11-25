@@ -1,0 +1,12 @@
+venv/
+venv1/
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.env
+.idea/
+desktop.ini
+**/desktop.ini
+reports/
+test/reports/

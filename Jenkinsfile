@@ -1,8 +1,13 @@
 pipeline {
-  // This pipeline uses PowerShell and Windows paths, so the selected agent must be Windows.
+  // Is pipeline ko Windows agent par chalna chahiye.
   agent any
 
+  tools {
+    git 'Default'
+  }
+
   options {
+    skipDefaultCheckout(true)
     timestamps()
     timeout(time: 60, unit: 'MINUTES')
   }
@@ -47,16 +52,31 @@ pipeline {
         powershell '''
           if (-not (Test-Path "venv\\Scripts\\python.exe")) {
             python -m venv venv
-          }
-
-          if ($env:INSTALL_DEPS -eq "true") {
-            & .\\venv\\Scripts\\python.exe -m pip install pytest playwright pytest-playwright pytest-html
-
-            if (Test-Path "requirements.txt") {
-              & .\\venv\\Scripts\\python.exe -m pip install -r requirements.txt
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not create the Python virtual environment."
             }
           }
         '''
+
+        script {
+          if (params.INSTALL_DEPS) {
+            powershell '''
+              $python = ".\\venv\\Scripts\\python.exe"
+
+              & $python -m pip install pytest playwright pytest-playwright pytest-html
+              if ($LASTEXITCODE -ne 0) {
+                throw "Python dependency installation failed."
+              }
+
+              if (Test-Path "requirements.txt") {
+                & $python -m pip install -r requirements.txt
+                if ($LASTEXITCODE -ne 0) {
+                  throw "requirements.txt installation failed."
+                }
+              }
+            '''
+          }
+        }
       }
     }
 
@@ -67,6 +87,9 @@ pipeline {
       steps {
         powershell '''
           & .\\venv\\Scripts\\python.exe -m playwright install
+          if ($LASTEXITCODE -ne 0) {
+            throw "Playwright browser installation failed."
+          }
         '''
       }
     }
@@ -75,6 +98,7 @@ pipeline {
       steps {
         script {
           def testPath
+
           switch (params.TEST_SUITE) {
             case 'all':
             case 'test':
@@ -93,6 +117,7 @@ pipeline {
               testPath = 'test/'
           }
 
+          // Playwright is headless by default; only headed mode needs a flag.
           def modeArg = params.MODE == 'headed' ? '--headed' : ''
 
           powershell """
@@ -101,13 +126,11 @@ pipeline {
             }
             New-Item -ItemType Directory -Force "reports" | Out-Null
 
-            & .\\\\venv\\\\Scripts\\\\python.exe -m pytest '${testPath}' `
-              --browser='${params.BROWSER}' `
-              ${modeArg} `
-              --html="reports/report_${params.BROWSER}_${env.BUILD_NUMBER}.html" `
-              --self-contained-html `
-              --junitxml="reports/results_${params.BROWSER}_${env.BUILD_NUMBER}.xml" `
-              -v
+            & .\\\\venv\\\\Scripts\\\\python.exe -m pytest '${testPath}' --browser='${params.BROWSER}' ${modeArg} --html="reports/report_${params.BROWSER}_${env.BUILD_NUMBER}.html" --self-contained-html --junitxml="reports/results_${params.BROWSER}_${env.BUILD_NUMBER}.xml" -v
+
+            if (\\$LASTEXITCODE -ne 0) {
+              exit \\$LASTEXITCODE
+            }
           """
         }
       }
